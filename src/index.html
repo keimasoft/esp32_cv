@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ro">
+<html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ESP32-CV</title>
@@ -14,18 +14,18 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;bo
 </style>
 </head>
 <body><main><h1>ESP32-CV</h1>
-<div><button onclick="setLed(true)">Aprinde LED</button><button onclick="setLed(false)">Stinge LED</button></div>
-<div><button id="capture" onclick="submitJob(false)">Fotografiază</button>
-<button id="infer" onclick="submitJob(true)" disabled>Rulează inferența</button></div>
-<p><label>Încarcă JPEG <input id="upload" type="file" accept="image/jpeg,.jpg,.jpeg" onchange="uploadImage()"></label></p>
-<label>Prag de încredere <input id="threshold" type="number" min="0.01" max="1" step="0.01" value="0.25"></label>
-<p>Inferența folosește ultima fotografie capturată sau încărcată. JPEG-urile sunt încadrate la 320 × 320, cu proporțiile păstrate.</p>
-<p id="message" role="status" aria-live="polite">Se citește starea...</p>
-<img id="camera" hidden alt="Ultima imagine capturată">
+<div><button onclick="setLed(true)">Turn LED on</button><button onclick="setLed(false)">Turn LED off</button></div>
+<div><button id="capture" onclick="submitJob(false)">Take photo</button>
+<button id="infer" onclick="submitJob(true)" disabled>Run inference</button></div>
+<p><label>Upload JPEG <input id="upload" type="file" accept="image/jpeg,.jpg,.jpeg" onchange="uploadImage()"></label></p>
+<label>Confidence threshold <input id="threshold" type="number" min="0.01" max="1" step="0.01" value="0.25"></label>
+<p>Inference uses the most recently captured or uploaded photo. JPEG images are fitted within 320 × 320 while preserving their aspect ratio.</p>
+<p id="message" role="status" aria-live="polite">Reading status...</p>
+<img id="camera" hidden alt="Most recent captured image">
 <pre id="timings"></pre>
-<table id="objects" hidden><thead><tr><th>Obiect</th><th>Scor</th><th>Coordonate</th></tr></thead><tbody></tbody></table>
+<table id="objects" hidden><thead><tr><th>Object</th><th>Score</th><th>Coordinates</th></tr></thead><tbody></tbody></table>
 <p id="count"></p>
-<details><summary>Statistici dispozitiv</summary><pre id="stats"></pre></details>
+<details><summary>Device statistics</summary><pre id="stats"></pre></details>
 </main><script>
 let imageId=-1, submitting=false, lastState=null;
 const byId=id=>document.getElementById(id);
@@ -36,7 +36,7 @@ async function setLed(on){try{await checked('/led/'+(on?'on':'off'),{method:'POS
 async function submitJob(infer){
  if(submitting||(lastState&&lastState.processing.busy))return;
  const threshold=byId('threshold');if(infer&&!threshold.reportValidity())return;
- submitting=true;buttons();message(infer?'Se rulează inferența...':'Se capturează fotografia...');
+ submitting=true;buttons();message(infer?'Running inference...':'Capturing photo...');
  try{await checked(infer?'/api/infer?threshold='+encodeURIComponent(threshold.value):'/api/capture',{method:'POST'});if(lastState){lastState.processing.busy=true;lastState.processing.operation=infer?'inference':'capture';}}
  catch(e){message(e.message,true);}
  finally{submitting=false;buttons();}
@@ -44,11 +44,11 @@ async function submitJob(infer){
 async function uploadImage(){
  const input=byId('upload'),file=input.files[0];
  if(!file||submitting||!lastState||lastState.processing.busy)return;
- submitting=true;buttons();message('Se pregătește și se încarcă imaginea...');
+ submitting=true;buttons();message('Preparing and uploading image...');
  const url=URL.createObjectURL(file);
  try{
   const signature=new Uint8Array(await file.slice(0,2).arrayBuffer());
-  if(signature[0]!==0xff||signature[1]!==0xd8)throw new Error('Selectează o imagine JPEG validă.');
+  if(signature[0]!==0xff||signature[1]!==0xd8)throw new Error('Select a valid JPEG image.');
   const image=new Image();image.src=url;await image.decode();
   const canvas=document.createElement('canvas');
   canvas.width=lastState.image_width;canvas.height=lastState.image_height;
@@ -71,25 +71,25 @@ async function uploadImage(){
 function render(s){
  lastState=s;const p=s.processing;buttons();
  if(submitting)return;
- if(p.busy)message(p.operation==='upload'?'Se încarcă imaginea...':p.operation==='inference'?'Se rulează inferența...':'Se capturează fotografia...');
+ if(p.busy)message(p.operation==='upload'?'Uploading image...':p.operation==='inference'?'Running inference...':'Capturing photo...');
  else if(p.error)message(p.error,true);
- else message(p.has_frame?(p.inferred?'Inferența este gata.':'Fotografia este gata. Poți rula inferența.'):'Fotografiază sau încarcă un JPEG pentru prima imagine.');
+ else message(p.has_frame?(p.inferred?'Inference complete.':'Photo ready. You can run inference.'):'Take a photo or upload a JPEG to get started.');
  if(p.image_id!==imageId&&p.has_frame){imageId=p.image_id;byId('camera').src='/image?t='+imageId;byId('camera').hidden=false;}
- byId('timings').textContent=`Captură: ${p.capture_ms.toFixed(1)} ms
-Inferență: ${p.inference_ms.toFixed(1)} ms
-Conversie JPEG: ${p.jpeg_ms.toFixed(1)} ms`;
+ byId('timings').textContent=`Capture: ${p.capture_ms.toFixed(1)} ms
+Inference: ${p.inference_ms.toFixed(1)} ms
+JPEG conversion: ${p.jpeg_ms.toFixed(1)} ms`;
  const tbody=byId('objects').querySelector('tbody');tbody.replaceChildren();
  for(const d of p.objects){const tr=document.createElement('tr');for(const value of [d.name,(d.score*100).toFixed(1)+'%',d.box.join(', ')]){const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}tbody.appendChild(tr);}
  byId('objects').hidden=!p.inferred;
- byId('count').textContent=p.inferred?`${p.total_objects} obiecte detectate`+(p.total_objects>p.objects.length?` (afișate primele ${p.objects.length})`:''):'';
- byId('stats').textContent=`Timp pornit: ${s.uptime_sec} s
-Temperatură internă: ${s.temperature_c===null?'indisponibilă':s.temperature_c+' °C'}
+ byId('count').textContent=p.inferred?`${p.total_objects} objects detected`+(p.total_objects>p.objects.length?` (showing the first ${p.objects.length})`:''):'';
+ byId('stats').textContent=`Uptime: ${s.uptime_sec} s
+Internal temperature: ${s.temperature_c===null?'unavailable':s.temperature_c+' °C'}
 CPU0: ${s.cpu0_usage_pct.toFixed(1)}% | CPU1: ${s.cpu1_usage_pct.toFixed(1)}%
-RAM internă liberă: ${s.internal_ram_free_kb} KB (minim ${s.internal_ram_min_kb} KB)
-PSRAM liberă: ${s.psram_free_kb} KB (minim ${s.psram_min_kb} KB)
-Wi-Fi: ${s.wifi_connected ? 'conectat' : 'deconectat'}`;
+Free internal RAM: ${s.internal_ram_free_kb} KB (minimum ${s.internal_ram_min_kb} KB)
+Free PSRAM: ${s.psram_free_kb} KB (minimum ${s.psram_min_kb} KB)
+Wi-Fi: ${s.wifi_connected ? 'connected' : 'disconnected'}`;
 }
-byId('camera').onerror=()=>{imageId=-1;message('Imaginea nu a putut fi încărcată. Se reîncearcă.',true);};
-async function poll(){try{render(await(await checked('/api/status',{cache:'no-store'})).json());}catch(e){lastState=null;buttons();message('Dispozitivul nu răspunde: '+e.message,true);}finally{setTimeout(poll,1000);}}
+byId('camera').onerror=()=>{imageId=-1;message('Could not load the image. Retrying.',true);};
+async function poll(){try{render(await(await checked('/api/status',{cache:'no-store'})).json());}catch(e){lastState=null;buttons();message('Device is not responding: '+e.message,true);}finally{setTimeout(poll,1000);}}
 poll();
 </script></body></html>

@@ -7,5 +7,4 @@ managed_components
 *.old
 __pycache__/
 *.pyc
-images
-README.md
+
