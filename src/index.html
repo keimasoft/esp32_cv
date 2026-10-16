@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32-CV</title>
+<style>
+body{font-family:system-ui;background:#111827;color:#f9fafb;margin:0;padding:2rem 1rem}
+main{max-width:40rem;margin:auto;background:#1f2937;padding:1.5rem;border-radius:1rem}
+h1{text-align:center}button,input{font:inherit}button{padding:.7rem 1rem;margin:.3rem;border:0;border-radius:.5rem;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}#capture{background:#38bdf8}#infer{background:#22c55e}
+img{display:block;width:100%;margin-top:1rem;border-radius:.6rem}img[hidden]{display:none}
+#message{min-height:1.5rem}#message.error{color:#fca5a5}pre{white-space:pre-wrap;line-height:1.6}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.4rem;border-bottom:1px solid #374151}
+</style>
+</head>
+<body><main><h1>ESP32-CV</h1>
+<div><button onclick="setLed(true)">Aprinde LED</button><button onclick="setLed(false)">Stinge LED</button></div>
+<div><button id="capture" onclick="submitJob(false)">Fotografiază</button>
+<button id="infer" onclick="submitJob(true)" disabled>Rulează inferența</button></div>
+<p><label>Încarcă JPEG <input id="upload" type="file" accept="image/jpeg,.jpg,.jpeg" onchange="uploadImage()"></label></p>
+<label>Prag de încredere <input id="threshold" type="number" min="0.01" max="1" step="0.01" value="0.25"></label>
+<p>Inferența folosește ultima fotografie capturată sau încărcată. JPEG-urile sunt încadrate la 320 × 320, cu proporțiile păstrate.</p>
+<p id="message" role="status" aria-live="polite">Se citește starea...</p>
+<img id="camera" hidden alt="Ultima imagine capturată">
+<pre id="timings"></pre>
+<table id="objects" hidden><thead><tr><th>Obiect</th><th>Scor</th><th>Coordonate</th></tr></thead><tbody></tbody></table>
+<p id="count"></p>
+<details><summary>Statistici dispozitiv</summary><pre id="stats"></pre></details>
+</main><script>
+let imageId=-1, submitting=false, lastState=null;
+const byId=id=>document.getElementById(id);
+function message(text,error=false){byId('message').textContent=text;byId('message').className=error?'error':'';}
+function buttons(){const busy=submitting||!lastState||lastState.processing.busy;byId('capture').disabled=busy;byId('infer').disabled=busy||!lastState.processing.has_frame;byId('threshold').disabled=busy;byId('upload').disabled=busy;}
+async function checked(url,options){const r=await fetch(url,options);if(!r.ok)throw new Error(await r.text());return r;}
+async function setLed(on){try{await checked('/led/'+(on?'on':'off'),{method:'POST'});}catch(e){message(e.message,true);}}
+async function submitJob(infer){
+ if(submitting||(lastState&&lastState.processing.busy))return;
+ const threshold=byId('threshold');if(infer&&!threshold.reportValidity())return;
+ submitting=true;buttons();message(infer?'Se rulează inferența...':'Se capturează fotografia...');
+ try{await checked(infer?'/api/infer?threshold='+encodeURIComponent(threshold.value):'/api/capture',{method:'POST'});if(lastState){lastState.processing.busy=true;lastState.processing.operation=infer?'inference':'capture';}}
+ catch(e){message(e.message,true);}
+ finally{submitting=false;buttons();}
+}
+async function uploadImage(){
+ const input=byId('upload'),file=input.files[0];
+ if(!file||submitting||!lastState||lastState.processing.busy)return;
+ submitting=true;buttons();message('Se pregătește și se încarcă imaginea...');
+ const url=URL.createObjectURL(file);
+ try{
+  const signature=new Uint8Array(await file.slice(0,2).arrayBuffer());
+  if(signature[0]!==0xff||signature[1]!==0xd8)throw new Error('Selectează o imagine JPEG validă.');
+  const image=new Image();image.src=url;await image.decode();
+  const canvas=document.createElement('canvas');
+  canvas.width=lastState.image_width;canvas.height=lastState.image_height;
+  const ctx=canvas.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,canvas.width,canvas.height);
+  const scale=Math.min(1,canvas.width/image.naturalWidth,canvas.height/image.naturalHeight);
+  const w=Math.max(1,Math.round(image.naturalWidth*scale)),h=Math.max(1,Math.round(image.naturalHeight*scale));
+  ctx.drawImage(image,Math.floor((canvas.width-w)/2),Math.floor((canvas.height-h)/2),w,h);
+  const rgba=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+  const pixels=new Uint8Array(canvas.width*canvas.height*2);
+  for(let i=0,j=0;i<rgba.length;i+=4,j+=2){
+   const rgb=((rgba[i]>>3)<<11)|((rgba[i+1]>>2)<<5)|(rgba[i+2]>>3);
+   pixels[j]=rgb>>8;pixels[j+1]=rgb&255;
+  }
+  await checked('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:pixels});
+  if(lastState){lastState.processing.busy=true;lastState.processing.operation='upload';}
+ }catch(e){message(e.message,true);}
+ finally{URL.revokeObjectURL(url);input.value='';submitting=false;buttons();}
+}
+
+function render(s){
+ lastState=s;const p=s.processing;buttons();
+ if(submitting)return;
+ if(p.busy)message(p.operation==='upload'?'Se încarcă imaginea...':p.operation==='inference'?'Se rulează inferența...':'Se capturează fotografia...');
+ else if(p.error)message(p.error,true);
+ else message(p.has_frame?(p.inferred?'Inferența este gata.':'Fotografia este gata. Poți rula inferența.'):'Fotografiază sau încarcă un JPEG pentru prima imagine.');
+ if(p.image_id!==imageId&&p.has_frame){imageId=p.image_id;byId('camera').src='/image?t='+imageId;byId('camera').hidden=false;}
+ byId('timings').textContent=`Captură: ${p.capture_ms.toFixed(1)} ms
+Inferență: ${p.inference_ms.toFixed(1)} ms
+Conversie JPEG: ${p.jpeg_ms.toFixed(1)} ms`;
+ const tbody=byId('objects').querySelector('tbody');tbody.replaceChildren();
+ for(const d of p.objects){const tr=document.createElement('tr');for(const value of [d.name,(d.score*100).toFixed(1)+'%',d.box.join(', ')]){const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}tbody.appendChild(tr);}
+ byId('objects').hidden=!p.inferred;
+ byId('count').textContent=p.inferred?`${p.total_objects} obiecte detectate`+(p.total_objects>p.objects.length?` (afișate primele ${p.objects.length})`:''):'';
+ byId('stats').textContent=`Timp pornit: ${s.uptime_sec} s
+Temperatură internă: ${s.temperature_c===null?'indisponibilă':s.temperature_c+' °C'}
+CPU0: ${s.cpu0_usage_pct.toFixed(1)}% | CPU1: ${s.cpu1_usage_pct.toFixed(1)}%
+RAM internă liberă: ${s.internal_ram_free_kb} KB (minim ${s.internal_ram_min_kb} KB)
+PSRAM liberă: ${s.psram_free_kb} KB (minim ${s.psram_min_kb} KB)
+Wi-Fi: ${s.wifi_connected ? 'conectat' : 'deconectat'}`;
+}
+byId('camera').onerror=()=>{imageId=-1;message('Imaginea nu a putut fi încărcată. Se reîncearcă.',true);};
+async function poll(){try{render(await(await checked('/api/status',{cache:'no-store'})).json());}catch(e){lastState=null;buttons();message('Dispozitivul nu răspunde: '+e.message,true);}finally{setTimeout(poll,1000);}}
+poll();
+</script></body></html>
