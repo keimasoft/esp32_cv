@@ -15,3 +15,4 @@ On-device object detection with a Wi-Fi web interface.
 | Connectivity | 2.4 GHz Wi-Fi, station mode |
 | Web interface | Camera capture, JPEG upload, adjustable confidence threshold, detection results and LED control |
 | Monitoring | CPU usage, memory, internal temperature and processing times |
+![Screenshot](images/screenshot.png)
