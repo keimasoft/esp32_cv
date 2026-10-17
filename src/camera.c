@@ -50,8 +50,8 @@ esp_err_t camera_init(void){
         return err;
     }
 
-    /* Lasam expunerea si balansul de alb sa se stabilizeze, apoi eliminam
-       primele cadre produse imediat dupa pornirea senzorului. */
+    /* Allow exposure and white balance to stabilize, then discard
+       the first frames produced immediately after the sensor starts. */
     vTaskDelay(pdMS_TO_TICKS(500));
     for (int i = 0; i < 3; ++i) {
         camera_fb_t *frame = esp_camera_fb_get();

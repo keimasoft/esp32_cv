@@ -54,7 +54,7 @@ static esp_err_t status_handler(httpd_req_t *request)
     if (isfinite(temperature)) snprintf(temp, sizeof(temp), "%.1f", temperature);
     const size_t capacity = 8192;
     char *json = malloc(capacity);
-    if (!json) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Memorie insuficienta");
+    if (!json) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
     size_t used = 0;
     bool ok = append_json(json, capacity, &used,
         "{\"image_width\":%u,\"image_height\":%u,\"uptime_sec\":%llu,\"temperature_c\":%s,"
@@ -88,7 +88,7 @@ static esp_err_t status_handler(httpd_req_t *request)
         httpd_resp_set_type(request, "application/json");
         httpd_resp_set_hdr(request, "Cache-Control", "no-store");
         result = httpd_resp_send(request, json, used);
-    } else result = httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Raspuns prea mare");
+    } else result = httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Response too large");
     free(json);
     return result;
 }
@@ -100,25 +100,25 @@ static esp_err_t submit_handler(httpd_req_t *request)
     if (infer) {
         char query[64], value[24];
         size_t query_length = httpd_req_get_url_query_len(request);
-        if (query_length >= sizeof(query)) return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Parametri prea lungi");
+        if (query_length >= sizeof(query)) return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Query parameters too long");
         if (query_length) {
             if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
                 httpd_query_key_value(query, "threshold", value, sizeof(value)) != ESP_OK) {
-                return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Prag invalid");
+                return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid threshold");
             }
             char *end;
             threshold = strtof(value, &end);
             if (end == value || *end || !isfinite(threshold) || threshold < 0.01f || threshold > 1.0f) {
-                return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Pragul trebuie sa fie intre 0.01 si 1");
+                return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Threshold must be between 0.01 and 1");
             }
         }
     }
     esp_err_t err = processing_submit(infer, threshold);
     if (err == ESP_ERR_INVALID_STATE) {
         httpd_resp_set_status(request, "409 Conflict");
-        return httpd_resp_sendstr(request, "Procesare in curs sau nicio fotografie capturata");
+        return httpd_resp_sendstr(request, "Processing in progress or no photo captured");
     }
-    if (err != ESP_OK) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Procesarea nu a putut fi pornita");
+    if (err != ESP_OK) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Could not start processing");
     httpd_resp_set_status(request, "202 Accepted");
     httpd_resp_set_type(request, "application/json");
     return httpd_resp_sendstr(request, "{\"accepted\":true}");
@@ -128,22 +128,22 @@ static esp_err_t submit_handler(httpd_req_t *request)
 static esp_err_t upload_handler(httpd_req_t *request)
 {
     if (request->content_len != PROCESSING_IMAGE_BYTES)
-        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Imagine RGB565 320x320 necesara");
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "A 320x320 RGB565 image is required");
     processing_status_t status;
     processing_get_status(&status);
     if (status.busy) {
         httpd_resp_set_status(request, "409 Conflict");
-        return httpd_resp_sendstr(request, "Procesare in curs");
+        return httpd_resp_sendstr(request, "Processing in progress");
     }
     uint8_t *pixels = heap_caps_malloc(PROCESSING_IMAGE_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!pixels) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Memorie insuficienta");
+    if (!pixels) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Insufficient memory");
     size_t received = 0;
     while (received < PROCESSING_IMAGE_BYTES) {
         int count = httpd_req_recv(request, (char *)pixels + received, PROCESSING_IMAGE_BYTES - received);
         if (count <= 0) {
             free(pixels);
             if (count == HTTPD_SOCK_ERR_TIMEOUT)
-                return httpd_resp_send_err(request, HTTPD_408_REQ_TIMEOUT, "Incarcare expirata");
+                return httpd_resp_send_err(request, HTTPD_408_REQ_TIMEOUT, "Upload timed out");
             return ESP_FAIL;
         }
         received += count;
@@ -153,7 +153,7 @@ static esp_err_t upload_handler(httpd_req_t *request)
         free(pixels);
         if (err == ESP_ERR_INVALID_STATE) {
             httpd_resp_set_status(request, "409 Conflict");
-            return httpd_resp_sendstr(request, "Procesare in curs");
+            return httpd_resp_sendstr(request, "Processing in progress");
         }
         return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Upload failed");
     }
@@ -169,7 +169,7 @@ static esp_err_t image_handler(httpd_req_t *request)
     esp_err_t err = processing_copy_jpeg(&jpeg, &length);
     if (err != ESP_OK) return httpd_resp_send_err(request,
         err == ESP_ERR_NOT_FOUND ? HTTPD_404_NOT_FOUND : HTTPD_500_INTERNAL_SERVER_ERROR,
-        err == ESP_ERR_NOT_FOUND ? "Nicio imagine capturata" : "Memorie insuficienta");
+        err == ESP_ERR_NOT_FOUND ? "No image captured" : "Insufficient memory");
     httpd_resp_set_type(request, "image/jpeg");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     esp_err_t result = httpd_resp_send(request, (const char *)jpeg, length);

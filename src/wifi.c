@@ -4,7 +4,7 @@
 #include "esp_netif.h"
 #include "esp_wifi.h"
 
-// Completeaza datele retelei Wi-Fi de 2.4 GHz. Pentru o retea deschisa, parola este "".
+// Enter the 2.4 GHz Wi-Fi network credentials. For an open network, use "" as the password.
 #define WIFI_SSID ""
 #define WIFI_PASSWORD ""
 

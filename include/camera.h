@@ -3,7 +3,7 @@
 
 #include "esp_camera.h"
 
-/* ESP32-S3-WROOM-1 N16R8 CAM, conector FPC OV5640. */
+/* ESP32-S3-WROOM-1 N16R8 CAM, OV5640 FPC connector. */
 #define CAM_PIN_PWDN    38
 #define CAM_PIN_RESET   -1
 #define CAM_PIN_XCLK    15
